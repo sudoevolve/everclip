@@ -166,6 +166,21 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         return "\(characterCount) 字符"
     }
 
+    var timestampText: String {
+        let calendar = Calendar.current
+        let timeText = createdAt.formatted(date: .omitted, time: .shortened)
+
+        if calendar.isDateInToday(createdAt) {
+            return timeText
+        }
+
+        if calendar.isDateInYesterday(createdAt) {
+            return "昨天 \(timeText)"
+        }
+
+        return createdAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
     var signature: String {
         if let imageData {
             return "image:\(imageData.count):\(imageData.stableFingerprint)"

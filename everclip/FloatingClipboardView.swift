@@ -185,7 +185,7 @@ private struct FloatingClipRow: View {
 
                 HStack(spacing: 8) {
                     Text(item.kind)
-                    Text(item.createdAt, style: .relative)
+                    Text(item.timestampText)
                     Text(item.metricText)
                 }
                 .font(.system(size: 11, weight: .medium, design: .rounded))

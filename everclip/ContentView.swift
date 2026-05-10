@@ -293,7 +293,7 @@ private struct ClipRow: View {
                         .padding(.vertical, 4)
                         .background(Color.primary.opacity(0.06), in: Capsule())
 
-                    Text(item.createdAt, style: .relative)
+                    Text(item.timestampText)
                         .font(.system(size: 11, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
 
@@ -429,7 +429,7 @@ private struct DetailPanel: View {
                             .frame(width: 10, height: 10)
                     }
 
-                    Text(item.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    Text(item.timestampText)
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.secondary)
 
@@ -570,7 +570,7 @@ private struct MenuClipRow: View {
                         }
 
                         Text(item.kind)
-                        Text(item.createdAt, style: .relative)
+                        Text(item.timestampText)
                     }
                     .font(.system(size: 10, weight: .medium, design: .rounded))
                     .foregroundStyle(.secondary)
