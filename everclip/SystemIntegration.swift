@@ -153,6 +153,8 @@ final class GlobalHotKeyManager {
 @MainActor
 final class FloatingClipboardPresenter {
     static let shared = FloatingClipboardPresenter()
+    private static let panelSize = NSSize(width: 460, height: 410)
+    private static let panelCornerRadius: CGFloat = 22
 
     private var panel: FloatingClipboardPanel?
     private weak var targetApplication: NSRunningApplication?
@@ -199,7 +201,7 @@ final class FloatingClipboardPresenter {
 
         if panel == nil {
             let panel = FloatingClipboardPanel(
-                contentRect: NSRect(x: 0, y: 0, width: 560, height: 500),
+                contentRect: NSRect(origin: .zero, size: Self.panelSize),
                 styleMask: [.nonactivatingPanel, .borderless],
                 backing: .buffered,
                 defer: false
@@ -217,6 +219,7 @@ final class FloatingClipboardPresenter {
             self.panel = panel
         }
 
+        panel?.setContentSize(Self.panelSize)
         settings.applyAppearance(to: panel)
         panel?.contentViewController = NSHostingController(rootView: content)
         configurePanelSurface()
@@ -263,7 +266,7 @@ final class FloatingClipboardPresenter {
         guard let panel, let contentView = panel.contentView else { return }
 
         contentView.wantsLayer = true
-        contentView.layer?.cornerRadius = 26
+        contentView.layer?.cornerRadius = Self.panelCornerRadius
         contentView.layer?.cornerCurve = .continuous
         contentView.layer?.masksToBounds = true
         contentView.layer?.backgroundColor = NSColor.clear.cgColor

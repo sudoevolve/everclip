@@ -166,13 +166,13 @@ private struct ClipboardTimeline: View {
                                     ClipRow(
                                         item: item,
                                         isSelected: selectedID == item.id || selectedID == nil && item.id == clipboard.filteredItems.first?.id,
-                                        namespace: selectionNamespace
-                                    )
-                                    .onTapGesture {
-                                        withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
-                                            selectedID = item.id
+                                        namespace: selectionNamespace,
+                                        onSelect: {
+                                            withAnimation(.spring(response: 0.32, dampingFraction: 0.84)) {
+                                                selectedID = item.id
+                                            }
                                         }
-                                    }
+                                    )
                                     .contextMenu {
                                         Button(item.isPinned ? "取消置顶" : "置顶收藏") {
                                             clipboard.togglePinned(item)
@@ -277,82 +277,58 @@ private struct ClipRow: View {
     let item: ClipboardItem
     let isSelected: Bool
     var namespace: Namespace.ID
+    let onSelect: () -> Void
 
     @State private var isHovering = false
+    private var showsActions: Bool {
+        isHovering || isSelected
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 13) {
-            ClipThumbnail(item: item, isActive: isSelected, size: CGSize(width: 48, height: 48))
+        ZStack(alignment: .trailing) {
+            rowContent
+                .padding(14)
+                .padding(.trailing, showsActions ? 150 : 0)
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .onTapGesture(perform: onSelect)
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(item.kind)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundStyle(item.accentColors.first ?? .cyan)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.primary.opacity(0.06), in: Capsule())
+            if showsActions {
+                HStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            Color.primary.opacity(colorScheme == .dark ? 0.11 : 0.07)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: 72)
+                    .allowsHitTesting(false)
 
-                    Text(item.timestampText)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundStyle(.secondary)
-
-                    Spacer(minLength: 4)
-
-                    Button {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
-                            clipboard.togglePinned(item)
+                    ClipActionRail(
+                        isPinned: item.isPinned,
+                        accentColors: item.accentColors,
+                        pinAction: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+                                clipboard.togglePinned(item)
+                            }
+                        },
+                        copyAction: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+                                clipboard.copy(item)
+                            }
+                        },
+                        deleteAction: {
+                            withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
+                                clipboard.remove(item)
+                            }
                         }
-                    } label: {
-                        Image(systemName: item.isPinned ? "pin.fill" : "pin")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(item.isPinned ? (item.accentColors.first ?? .cyan) : Color.secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Color.primary.opacity(isHovering || isSelected ? 0.09 : 0.04), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(item.isPinned ? "取消置顶" : "置顶收藏")
-
-                    Button {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
-                            clipboard.copy(item)
-                        }
-                    } label: {
-                        Image(systemName: "doc.on.clipboard")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(isHovering || isSelected ? Color.primary : Color.secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Color.primary.opacity(isHovering || isSelected ? 0.09 : 0.04), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("复制")
-
-                    Button(role: .destructive) {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
-                            clipboard.remove(item)
-                        }
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(isHovering || isSelected ? .red : Color.secondary)
-                            .frame(width: 30, height: 30)
-                            .background(Color.primary.opacity(isHovering || isSelected ? 0.09 : 0.04), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("删除")
+                    )
+                    .padding(.trailing, 8)
                 }
-
-                Text(item.title)
-                    .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text(item.metricText)
-                    .font(.system(size: 11, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
+                .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity), removal: .opacity))
             }
         }
-        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
             ZStack {
@@ -379,6 +355,45 @@ private struct ClipRow: View {
                 isHovering = hovering
             }
         }
+        .animation(.spring(response: 0.24, dampingFraction: 0.84), value: showsActions)
+    }
+
+    private var rowContent: some View {
+        HStack(alignment: .top, spacing: 13) {
+            ClipThumbnail(item: item, isActive: isSelected, size: CGSize(width: 48, height: 48))
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(item.kind)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(item.accentColors.first ?? .cyan)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.primary.opacity(0.06), in: Capsule())
+
+                    Text(item.timestampText)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundStyle(.secondary)
+
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(item.accentColors.first ?? .cyan)
+                    }
+
+                    Spacer(minLength: 4)
+                }
+
+                Text(item.title)
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Text(item.metricText)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -401,23 +416,26 @@ private struct DetailPanel: View {
                 Spacer()
 
                 if let item {
-                    IconButton(systemName: item.isPinned ? "pin.slash.fill" : "pin.fill", helpText: item.isPinned ? "取消置顶" : "置顶收藏") {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
-                            clipboard.togglePinned(item)
+                    ClipActionRail(
+                        isPinned: item.isPinned,
+                        accentColors: item.accentColors,
+                        compact: true,
+                        pinAction: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
+                                clipboard.togglePinned(item)
+                            }
+                        },
+                        copyAction: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
+                                clipboard.copy(item)
+                            }
+                        },
+                        deleteAction: {
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
+                                clipboard.remove(item)
+                            }
                         }
-                    }
-
-                    IconButton(systemName: "doc.on.doc", helpText: "复制此剪贴") {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
-                            clipboard.copy(item)
-                        }
-                    }
-
-                    IconButton(systemName: "trash.fill", helpText: "删除此剪贴", role: .destructive) {
-                        withAnimation(.spring(response: 0.24, dampingFraction: 0.80)) {
-                            clipboard.remove(item)
-                        }
-                    }
+                    )
                 }
             }
 
@@ -550,38 +568,51 @@ struct MenuBarClipboardView: View {
 private struct MenuClipRow: View {
     @EnvironmentObject private var clipboard: ClipboardStore
     let item: ClipboardItem
+    @State private var isHovering = false
 
     var body: some View {
-        Button {
-            clipboard.copy(item)
-        } label: {
-            HStack(spacing: 12) {
-                ClipThumbnail(item: item, isActive: false, size: CGSize(width: 38, height: 38))
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(item.title)
-                        .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .lineLimit(2)
-
-                    HStack(spacing: 8) {
-                        if item.isPinned {
-                            Image(systemName: "pin.fill")
-                                .foregroundStyle(item.accentColors.first ?? .cyan)
-                        }
-
-                        Text(item.kind)
-                        Text(item.timestampText)
+        ZStack(alignment: .trailing) {
+            menuContent
+                .padding(11)
+                .padding(.trailing, isHovering ? 118 : 0)
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.22, dampingFraction: 0.80)) {
+                        clipboard.copy(item)
                     }
-                    .font(.system(size: 10, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
                 }
 
-                Spacer(minLength: 4)
+            if isHovering {
+                ClipActionRail(
+                    isPinned: item.isPinned,
+                    accentColors: item.accentColors,
+                    compact: true,
+                    pinAction: {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.80)) {
+                            clipboard.togglePinned(item)
+                        }
+                    },
+                    copyAction: {
+                        withAnimation(.spring(response: 0.22, dampingFraction: 0.80)) {
+                            clipboard.copy(item)
+                        }
+                    },
+                    deleteAction: {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                            clipboard.remove(item)
+                        }
+                    }
+                )
+                .padding(.trailing, 6)
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
-            .padding(11)
-            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .background(Color.primary.opacity(isHovering ? 0.070 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.20, dampingFraction: 0.82)) {
+                isHovering = hovering
+            }
+        }
         .contextMenu {
             Button(item.isPinned ? "取消置顶" : "置顶收藏") {
                 clipboard.togglePinned(item)
@@ -594,6 +625,32 @@ private struct MenuClipRow: View {
             Button("删除", role: .destructive) {
                 clipboard.remove(item)
             }
+        }
+    }
+
+    private var menuContent: some View {
+        HStack(spacing: 12) {
+            ClipThumbnail(item: item, isActive: false, size: CGSize(width: 38, height: 38))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    .lineLimit(2)
+
+                HStack(spacing: 8) {
+                    if item.isPinned {
+                        Image(systemName: "pin.fill")
+                            .foregroundStyle(item.accentColors.first ?? .cyan)
+                    }
+
+                    Text(item.kind)
+                    Text(item.timestampText)
+                }
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 4)
         }
     }
 }
@@ -623,6 +680,8 @@ private struct IconButton: View {
     let helpText: String
     var role: ButtonRole?
     let action: () -> Void
+    @State private var isHovering = false
+    @State private var feedbackTick = 0
 
     init(systemName: String, helpText: String, role: ButtonRole? = nil, action: @escaping () -> Void) {
         self.systemName = systemName
@@ -632,15 +691,25 @@ private struct IconButton: View {
     }
 
     var body: some View {
-        Button(role: role, action: action) {
+        Button(role: role) {
+            feedbackTick += 1
+            action()
+        } label: {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(role == .destructive ? .red : Color.primary)
                 .frame(width: 42, height: 42)
                 .everclipControl(cornerRadius: 14)
+                .scaleEffect(isHovering ? 1.05 : 1)
+                .symbolEffect(.bounce, value: feedbackTick)
         }
         .buttonStyle(.plain)
         .help(helpText)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.18, dampingFraction: 0.76)) {
+                isHovering = hovering
+            }
+        }
     }
 }
 
@@ -739,7 +808,7 @@ private struct ClipThumbnail: View {
 
     var body: some View {
         #if os(macOS)
-        if item.isImage, let image = item.nsImage {
+        if item.isImage, let image = item.thumbnailImage {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFill()

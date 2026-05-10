@@ -20,8 +20,12 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     let id: UUID
     let text: String
     let imageData: Data?
+    let imageFileName: String?
+    let thumbnailData: Data?
     let imageWidth: Double?
     let imageHeight: Double?
+    let imageByteCount: Int?
+    let imageSignature: String?
     let createdAt: Date
     let accentIndex: Int
     let isPinned: Bool
@@ -30,8 +34,12 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         id: UUID = UUID(),
         text: String,
         imageData: Data? = nil,
+        imageFileName: String? = nil,
+        thumbnailData: Data? = nil,
         imageWidth: Double? = nil,
         imageHeight: Double? = nil,
+        imageByteCount: Int? = nil,
+        imageSignature: String? = nil,
         createdAt: Date = .now,
         accentIndex: Int? = nil,
         isPinned: Bool = false
@@ -39,10 +47,14 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         self.id = id
         self.text = text
         self.imageData = imageData
+        self.imageFileName = imageFileName
+        self.thumbnailData = thumbnailData
         self.imageWidth = imageWidth
         self.imageHeight = imageHeight
+        self.imageByteCount = imageByteCount
+        self.imageSignature = imageSignature
         self.createdAt = createdAt
-        let seed = imageData.map { "\($0.count)-\($0.stableFingerprint)" } ?? text
+        let seed = imageSignature ?? imageData.map { "\($0.count)-\($0.stableFingerprint)" } ?? imageFileName ?? text
         self.accentIndex = accentIndex ?? abs(seed.hashValue % ClipboardItem.accentPairs.count)
         self.isPinned = isPinned
     }
@@ -51,8 +63,12 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         case id
         case text
         case imageData
+        case imageFileName
+        case thumbnailData
         case imageWidth
         case imageHeight
+        case imageByteCount
+        case imageSignature
         case createdAt
         case accentIndex
         case isPinned
@@ -64,42 +80,76 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         id = try container.decode(UUID.self, forKey: .id)
         text = try container.decode(String.self, forKey: .text)
         imageData = try container.decodeIfPresent(Data.self, forKey: .imageData)
+        imageFileName = try container.decodeIfPresent(String.self, forKey: .imageFileName)
+        thumbnailData = try container.decodeIfPresent(Data.self, forKey: .thumbnailData)
         imageWidth = try container.decodeIfPresent(Double.self, forKey: .imageWidth)
         imageHeight = try container.decodeIfPresent(Double.self, forKey: .imageHeight)
+        imageByteCount = try container.decodeIfPresent(Int.self, forKey: .imageByteCount)
+        imageSignature = try container.decodeIfPresent(String.self, forKey: .imageSignature)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         accentIndex = try container.decode(Int.self, forKey: .accentIndex)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
     }
 
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+
+        try container.encode(id, forKey: .id)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(imageFileName, forKey: .imageFileName)
+        try container.encodeIfPresent(thumbnailData, forKey: .thumbnailData)
+        try container.encodeIfPresent(imageWidth, forKey: .imageWidth)
+        try container.encodeIfPresent(imageHeight, forKey: .imageHeight)
+        try container.encodeIfPresent(imageByteCount, forKey: .imageByteCount)
+        try container.encodeIfPresent(imageSignature, forKey: .imageSignature)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(accentIndex, forKey: .accentIndex)
+        try container.encode(isPinned, forKey: .isPinned)
+    }
+
     #if os(macOS)
     init?(image: NSImage, createdAt: Date = .now) {
-        guard let data = Self.pngData(from: image) ?? image.tiffRepresentation else { return nil }
-
-        self.init(
-            text: "",
-            imageData: data,
-            imageWidth: image.size.width,
-            imageHeight: image.size.height,
-            createdAt: createdAt
-        )
+        guard let pngData = Self.pngData(from: image) ?? image.tiffRepresentation else { return nil }
+        self.init(storedImageData: pngData, image: image, createdAt: createdAt)
     }
 
     init?(imageData: Data, createdAt: Date = .now) {
         guard let image = NSImage(data: imageData) else { return nil }
         let data = Self.pngData(from: image) ?? imageData
+        self.init(storedImageData: data, image: image, createdAt: createdAt)
+    }
+
+    private init?(
+        storedImageData data: Data,
+        image: NSImage,
+        id: UUID = UUID(),
+        createdAt: Date = .now,
+        accentIndex: Int? = nil,
+        isPinned: Bool = false
+    ) {
+        guard let fileName = Self.storeImageData(data, id: id) else { return nil }
+        let thumbnailData = Self.thumbnailData(from: image, maxPixelSize: 220)
+        let signature = "\(data.count):\(data.stableFingerprint)"
 
         self.init(
+            id: id,
             text: "",
-            imageData: data,
+            imageData: nil,
+            imageFileName: fileName,
+            thumbnailData: thumbnailData,
             imageWidth: image.size.width,
             imageHeight: image.size.height,
-            createdAt: createdAt
+            imageByteCount: data.count,
+            imageSignature: signature,
+            createdAt: createdAt,
+            accentIndex: accentIndex,
+            isPinned: isPinned
         )
     }
     #endif
 
     var isImage: Bool {
-        imageData != nil
+        imageFileName != nil || imageData != nil
     }
 
     var title: String {
@@ -151,8 +201,8 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     }
 
     var characterCount: Int {
-        if let imageData {
-            return imageData.count
+        if isImage {
+            return imageByteCount ?? imageData?.count ?? thumbnailData?.count ?? 0
         }
 
         return text.count
@@ -182,6 +232,10 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     }
 
     var signature: String {
+        if let imageSignature {
+            return "image:\(imageSignature)"
+        }
+
         if let imageData {
             return "image:\(imageData.count):\(imageData.stableFingerprint)"
         }
@@ -190,6 +244,10 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     }
 
     private var signatureSeed: String {
+        if let imageSignature {
+            return imageSignature
+        }
+
         if let imageData {
             return "\(imageData.count)-\(imageData.stableFingerprint)"
         }
@@ -198,7 +256,7 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     }
 
     var imageDescription: String {
-        guard let imageData else { return "图片" }
+        guard isImage else { return "图片" }
 
         let sizeText: String
         if let imageWidth, let imageHeight {
@@ -207,7 +265,8 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
             sizeText = "未知尺寸"
         }
 
-        return "\(sizeText) · \(ByteCountFormatter.string(fromByteCount: Int64(imageData.count), countStyle: .file))"
+        let byteCount = imageByteCount ?? imageData?.count ?? thumbnailData?.count ?? 0
+        return "\(sizeText) · \(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))"
     }
 
     var accentColors: [Color] {
@@ -219,8 +278,12 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
             id: id,
             text: text,
             imageData: imageData,
+            imageFileName: imageFileName,
+            thumbnailData: thumbnailData,
             imageWidth: imageWidth,
             imageHeight: imageHeight,
+            imageByteCount: imageByteCount,
+            imageSignature: imageSignature,
             createdAt: createdAt,
             accentIndex: accentIndex,
             isPinned: pinned
@@ -228,9 +291,40 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
     }
 
     #if os(macOS)
+    var originalImageData: Data? {
+        if let imageFileURL {
+            return try? Data(contentsOf: imageFileURL, options: .mappedIfSafe)
+        }
+
+        return imageData
+    }
+
     var nsImage: NSImage? {
-        guard let imageData else { return nil }
-        return NSImage(data: imageData)
+        let cacheKey = NSString(string: "full-\(id.uuidString)")
+        if let cached = Self.fullImageCache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        guard let data = originalImageData, let image = NSImage(data: data) else { return nil }
+        Self.fullImageCache.setObject(image, forKey: cacheKey, cost: data.count)
+        return image
+    }
+
+    var thumbnailImage: NSImage? {
+        let cacheKey = NSString(string: "thumb-\(id.uuidString)")
+        if let cached = Self.thumbnailImageCache.object(forKey: cacheKey) {
+            return cached
+        }
+
+        let data = thumbnailData ?? originalImageData
+        guard let data, let image = NSImage(data: data) else { return nil }
+        Self.thumbnailImageCache.setObject(image, forKey: cacheKey, cost: data.count)
+        return image
+    }
+
+    var imageFileURL: URL? {
+        guard let imageFileName else { return nil }
+        return Self.imageStorageDirectory?.appendingPathComponent(imageFileName)
     }
 
     static func pngData(from image: NSImage) -> Data? {
@@ -249,6 +343,93 @@ struct ClipboardItem: Identifiable, Codable, Hashable {
         bitmap.size = image.size
         return bitmap.representation(using: .png, properties: [:])
     }
+
+    static func storedImageItem(
+        from data: Data,
+        id: UUID,
+        createdAt: Date,
+        accentIndex: Int,
+        isPinned: Bool
+    ) -> ClipboardItem? {
+        guard let image = NSImage(data: data) else { return nil }
+        let pngData = pngData(from: image) ?? data
+        return ClipboardItem(
+            storedImageData: pngData,
+            image: image,
+            id: id,
+            createdAt: createdAt,
+            accentIndex: accentIndex,
+            isPinned: isPinned
+        )
+    }
+
+    static func removeStoredImage(for item: ClipboardItem) {
+        guard let url = item.imageFileURL else { return }
+        try? FileManager.default.removeItem(at: url)
+        clearCachedImages(for: item.id)
+    }
+
+    static func clearCachedImages(for id: UUID) {
+        thumbnailImageCache.removeObject(forKey: NSString(string: "thumb-\(id.uuidString)"))
+        fullImageCache.removeObject(forKey: NSString(string: "full-\(id.uuidString)"))
+    }
+
+    private static var imageStorageDirectory: URL? {
+        guard let appSupportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+
+        let directoryURL = appSupportURL
+            .appendingPathComponent("Everclip", isDirectory: true)
+            .appendingPathComponent("Images", isDirectory: true)
+
+        try? FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        return directoryURL
+    }
+
+    private static func storeImageData(_ data: Data, id: UUID) -> String? {
+        guard let directoryURL = imageStorageDirectory else { return nil }
+
+        let fileName = "\(id.uuidString).png"
+        let fileURL = directoryURL.appendingPathComponent(fileName)
+
+        do {
+            try data.write(to: fileURL, options: .atomic)
+            return fileName
+        } catch {
+            return nil
+        }
+    }
+
+    private static func thumbnailData(from image: NSImage, maxPixelSize: CGFloat) -> Data? {
+        let sourceSize = image.size
+        guard sourceSize.width > 0, sourceSize.height > 0 else { return nil }
+
+        let scale = min(maxPixelSize / max(sourceSize.width, sourceSize.height), 1)
+        let targetSize = CGSize(width: max(1, sourceSize.width * scale), height: max(1, sourceSize.height * scale))
+        let thumbnail = NSImage(size: targetSize)
+
+        thumbnail.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: targetSize), from: .zero, operation: .copy, fraction: 1)
+        thumbnail.unlockFocus()
+
+        return pngData(from: thumbnail)
+    }
+
+    private static let thumbnailImageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 120
+        cache.totalCostLimit = 12 * 1_024 * 1_024
+        return cache
+    }()
+
+    private static let fullImageCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 3
+        cache.totalCostLimit = 48 * 1_024 * 1_024
+        return cache
+    }()
     #endif
 
     static let accentPairs: [[Color]] = [
@@ -363,7 +544,9 @@ final class ClipboardStore: ObservableObject {
     #endif
 
     func remove(_ item: ClipboardItem) {
+        let removed = items.filter { $0.id == item.id }
         items.removeAll { $0.id == item.id }
+        removeStoredImages(for: removed)
         persistHistory()
     }
 
@@ -375,7 +558,9 @@ final class ClipboardStore: ObservableObject {
     }
 
     func clearHistory() {
+        let removed = items
         items.removeAll()
+        removeStoredImages(for: removed)
         persistHistory()
     }
 
@@ -389,7 +574,7 @@ final class ClipboardStore: ObservableObject {
     private func startMonitoring() {
         #if os(macOS)
         timer?.invalidate()
-        let timer = Timer(timeInterval: 0.7, repeats: true) { _ in
+        let timer = Timer(timeInterval: 1.0, repeats: true) { _ in
             Task { @MainActor [weak self] in
                 self?.scanPasteboard()
             }
@@ -433,11 +618,13 @@ final class ClipboardStore: ObservableObject {
     private func insertOrPromote(_ item: ClipboardItem, shouldPersist: Bool) {
         guard item.isImage || !item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
 
-        let wasPinned = items.first { $0.signature == item.signature }?.isPinned ?? item.isPinned
+        let duplicates = items.filter { $0.signature == item.signature }
+        let wasPinned = duplicates.first?.isPinned ?? item.isPinned
         let promotedItem = item.pinned(wasPinned)
 
         items.removeAll { $0.signature == item.signature }
         items.insert(promotedItem, at: 0)
+        removeStoredImages(for: duplicates.filter { $0.id != promotedItem.id })
 
         if items.count > maxItems {
             trimHistory()
@@ -453,7 +640,12 @@ final class ClipboardStore: ObservableObject {
     private func trimHistory() {
         let pinned = items.filter(\.isPinned)
         let unpinned = items.filter { !$0.isPinned }
-        items = Array((pinned + unpinned).prefix(maxItems))
+        let trimmedItems = Array((pinned + unpinned).prefix(maxItems))
+        let retainedIDs = Set(trimmedItems.map(\.id))
+        let removed = items.filter { !retainedIDs.contains($0.id) }
+
+        items = trimmedItems
+        removeStoredImages(for: removed)
     }
 
     private func sortedItems(_ items: [ClipboardItem]) -> [ClipboardItem] {
@@ -464,6 +656,12 @@ final class ClipboardStore: ObservableObject {
 
             return first.createdAt > second.createdAt
         }
+    }
+
+    private func removeStoredImages(for items: [ClipboardItem]) {
+        #if os(macOS)
+        items.forEach { ClipboardItem.removeStoredImage(for: $0) }
+        #endif
     }
 
     #if os(macOS)
@@ -498,17 +696,15 @@ final class ClipboardStore: ObservableObject {
     }
 
     private func writeImageToPasteboard(_ item: ClipboardItem, pasteboard: NSPasteboard) {
-        guard let image = item.nsImage else { return }
+        guard let image = item.nsImage, let originalData = item.originalImageData else { return }
 
-        let pngData = ClipboardItem.pngData(from: image)
+        let pngData = ClipboardItem.pngData(from: image) ?? originalData
         let tiffData = image.tiffRepresentation
-        let fileURL = pngData.flatMap { exportedImageURL(for: item, pngData: $0) }
+        let fileURL = item.imageFileURL ?? exportedImageURL(for: item, pngData: pngData)
         var types: [NSPasteboard.PasteboardType] = []
 
-        if pngData != nil {
-            types.append(.png)
-            types.append(.init("Apple PNG pasteboard type"))
-        }
+        types.append(.png)
+        types.append(.init("Apple PNG pasteboard type"))
 
         if tiffData != nil {
             types.append(.tiff)
@@ -530,10 +726,8 @@ final class ClipboardStore: ObservableObject {
 
         pasteboard.declareTypes(uniquePasteboardTypes(types), owner: nil)
 
-        if let pngData {
-            pasteboard.setData(pngData, forType: .png)
-            pasteboard.setData(pngData, forType: .init("Apple PNG pasteboard type"))
-        }
+        pasteboard.setData(pngData, forType: .png)
+        pasteboard.setData(pngData, forType: .init("Apple PNG pasteboard type"))
 
         if let tiffData {
             pasteboard.setData(tiffData, forType: .tiff)
@@ -598,8 +792,9 @@ final class ClipboardStore: ObservableObject {
         if let url = historyFileURL,
            let data = try? Data(contentsOf: url),
            let decoded = try? JSONDecoder().decode([ClipboardItem].self, from: data) {
-            items = decoded
+            items = migrateImageItemsToDisk(decoded)
             UserDefaults.standard.removeObject(forKey: storageKey)
+            persistHistory()
             return
         }
 
@@ -615,19 +810,34 @@ final class ClipboardStore: ObservableObject {
             return
         }
 
-        items = decoded
-        persistHistoryToDisk(decoded)
+        items = migrateImageItemsToDisk(decoded)
+        persistHistory()
+    }
+
+    private func migrateImageItemsToDisk(_ decodedItems: [ClipboardItem]) -> [ClipboardItem] {
+        #if os(macOS)
+        decodedItems.map { item in
+            guard item.isImage, item.imageFileName == nil, let imageData = item.imageData else {
+                return item
+            }
+
+            return ClipboardItem.storedImageItem(
+                from: imageData,
+                id: item.id,
+                createdAt: item.createdAt,
+                accentIndex: item.accentIndex,
+                isPinned: item.isPinned
+            ) ?? item
+        }
+        #else
+        decodedItems
+        #endif
     }
 
     private func persistHistory() {
         guard let data = try? JSONEncoder().encode(items) else { return }
         persistHistoryToDiskData(data)
         UserDefaults.standard.removeObject(forKey: storageKey)
-    }
-
-    private func persistHistoryToDisk(_ items: [ClipboardItem]) {
-        guard let data = try? JSONEncoder().encode(items) else { return }
-        persistHistoryToDiskData(data)
     }
 
     private func persistHistoryToDiskData(_ data: Data) {
