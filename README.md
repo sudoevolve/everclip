@@ -1,34 +1,70 @@
 # Everclip
 
-Everclip 是一个为 macOS 设计的菜单栏剪贴板工具。它会在后台记录文本和图片剪贴内容，并提供快速搜索、预览、置顶收藏和快捷粘贴能力。
+Everclip 是一个为 macOS 设计的菜单栏剪贴板工具。它把剪贴板历史、图片预览、快速搜索和输入处快捷粘贴收进一个轻量浮窗里，适合反复复制代码、链接、截图和常用文本的人。
 
-## 功能
+它不是一个大而重的资料库，而是一个贴近输入场景的快速粘贴层：常驻菜单栏，需要时用快捷键唤出，选中后直接复制或粘贴。
+
+## 预览
+
+<p align="center">
+  <img src="preview/1.png" alt="Everclip 日间模式预览" width="46%">
+  <img src="preview/2.png" alt="Everclip 夜间模式预览" width="46%">
+</p>
+
+## 亮点
 
 - 菜单栏常驻运行，不占用 Dock 空间
-- 自动捕获剪贴板文本和图片
-- 支持图片预览和再次粘贴
+- 自动捕获文本、链接、代码片段、截图和图片
+- 图片缩略图预览，支持再次复制和粘贴
 - `Command + Shift + V` 打开快速粘贴浮窗
-- 历史记录搜索、分组折叠、置顶收藏
-- 单条删除和一键清空历史
+- 搜索剪贴历史，按键盘选择并回车粘贴
+- 支持置顶收藏、单条删除、分组折叠和一键清空
+- 悬停操作区：复制、置顶、删除不再藏在右键菜单里
 - 日间、夜间、跟随系统外观
-- 首次启动引导和独立设置窗口
+- 首次启动介绍和独立设置窗口
+- 历史记录落盘保存，图片文件独立存储，降低偏大的 UserDefaults 写入风险
+
+## 快捷键
+
+| 操作 | 快捷键 |
+| --- | --- |
+| 打开快速粘贴浮窗 | `Command + Shift + V` |
+| 在浮窗中移动选择 | `↑` / `↓` |
+| 粘贴当前选择 | `Return` |
+| 关闭浮窗 | `Esc` |
 
 ## 权限
 
-自动粘贴需要 macOS 辅助功能权限。首次使用快速粘贴时，如果没有授权，Everclip 会请求权限。
+Everclip 可以记录剪贴板历史。若要在选择后自动回填到当前输入框，需要授予 macOS 辅助功能权限。
 
-也可以手动打开：
+手动授权路径：
 
-`系统设置 -> 隐私与安全性 -> 辅助功能`
+```text
+系统设置 -> 隐私与安全性 -> 辅助功能
+```
 
-然后将 Everclip 添加并勾选。
+然后添加并启用 Everclip。未授权时，Everclip 仍然可以复制选中的历史项，但自动粘贴可能需要你再按一次 `Command + V`。
 
-## 运行
+## 运行与构建
 
-使用 Xcode 打开 `everclip.xcodeproj`，选择 `everclip` scheme 后运行即可。
+使用 Xcode 打开 `everclip.xcodeproj`，选择 `everclip` scheme 后运行。
 
 命令行构建：
 
 ```sh
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild -project everclip.xcodeproj -scheme everclip -destination platform=macOS -derivedDataPath /private/tmp/everclip-derived CODE_SIGNING_ALLOWED=NO build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
+  -project everclip.xcodeproj \
+  -scheme everclip \
+  -destination platform=macOS \
+  -derivedDataPath /private/tmp/everclip-derived \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 ```
+
+
+
+## about
+
+sudoevolve
+
+Email: sudoevolve@gmail.com
