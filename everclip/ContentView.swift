@@ -85,10 +85,8 @@ private struct HeaderBar: View {
                 }
             }
 
-            IconButton(systemName: colorScheme == .dark ? "sun.max.fill" : "moon.fill", helpText: "切换日间/夜间") {
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
-                    settings.theme = colorScheme == .dark ? .day : .night
-                }
+            IconButton(systemName: settings.isNightMode(systemColorScheme: colorScheme) ? "sun.max.fill" : "moon.fill", helpText: "切换日间/夜间") {
+                settings.toggleTheme(systemColorScheme: colorScheme)
             }
 
             #if os(macOS)

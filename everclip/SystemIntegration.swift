@@ -23,13 +23,11 @@ final class EverclipModel: ObservableObject {
     init() {
         settings.applyApplicationAppearance()
         settings.$theme
+            .removeDuplicates()
             .sink { [weak self] _ in
-                guard let self else { return }
-                self.settings.applyApplicationAppearance()
-                MainWindowPresenter.shared.applyAppearance(settings: self.settings)
-                SettingsWindowPresenter.shared.applyAppearance(settings: self.settings)
-                FloatingClipboardPresenter.shared.applyAppearance(settings: self.settings)
-                OnboardingWindowPresenter.shared.applyAppearance(settings: self.settings)
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyAppearanceToOpenSurfaces()
+                }
             }
             .store(in: &cancellables)
 
@@ -42,6 +40,14 @@ final class EverclipModel: ObservableObject {
             guard let self, !self.settings.hasSeenIntro else { return }
             OnboardingWindowPresenter.shared.show(settings: self.settings, clipboard: self.clipboard)
         }
+    }
+
+    private func applyAppearanceToOpenSurfaces() {
+        settings.applyApplicationAppearance()
+        MainWindowPresenter.shared.applyAppearance(settings: settings)
+        SettingsWindowPresenter.shared.applyAppearance(settings: settings)
+        FloatingClipboardPresenter.shared.applyAppearance(settings: settings)
+        OnboardingWindowPresenter.shared.applyAppearance(settings: settings)
     }
 }
 
@@ -221,7 +227,7 @@ final class FloatingClipboardPresenter {
 
         panel?.setContentSize(Self.panelSize)
         settings.applyAppearance(to: panel)
-        panel?.contentViewController = NSHostingController(rootView: content)
+        panel?.installEverclipGlassContent(content, material: .popover, cornerRadius: Self.panelCornerRadius)
         configurePanelSurface()
         positionPanel(settings: settings)
         panel?.makeKeyAndOrderFront(nil)
@@ -334,9 +340,79 @@ private extension CGRect {
     }
 }
 
+extension NSWindow {
+    func configureEverclipGlassSurface(hasShadow: Bool = true) {
+        isOpaque = false
+        backgroundColor = .clear
+        self.hasShadow = hasShadow
+    }
+
+    func installEverclipGlassContent<Content: View>(
+        _ rootView: Content,
+        material: NSVisualEffectView.Material = .underWindowBackground,
+        cornerRadius: CGFloat? = nil
+    ) {
+        contentViewController = EverclipGlassHostingController(
+            rootView: rootView,
+            material: material,
+            cornerRadius: cornerRadius
+        )
+    }
+}
+
 final class FloatingClipboardPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+}
+
+private final class EverclipGlassHostingController<Content: View>: NSViewController {
+    private let hostingController: NSHostingController<Content>
+    private let material: NSVisualEffectView.Material
+    private let cornerRadius: CGFloat?
+
+    init(rootView: Content, material: NSVisualEffectView.Material, cornerRadius: CGFloat?) {
+        hostingController = NSHostingController(rootView: rootView)
+        self.material = material
+        self.cornerRadius = cornerRadius
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        let glassView = NSVisualEffectView()
+        glassView.material = material
+        glassView.blendingMode = .behindWindow
+        glassView.state = .active
+        glassView.isEmphasized = true
+        glassView.wantsLayer = true
+        glassView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        if let cornerRadius {
+            glassView.layer?.cornerRadius = cornerRadius
+            glassView.layer?.cornerCurve = .continuous
+            glassView.layer?.masksToBounds = true
+        }
+
+        let hostedView = hostingController.view
+        hostedView.translatesAutoresizingMaskIntoConstraints = false
+        hostedView.wantsLayer = true
+        hostedView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostedView.layer?.isOpaque = false
+
+        view = glassView
+        addChild(hostingController)
+        glassView.addSubview(hostedView)
+        NSLayoutConstraint.activate([
+            hostedView.leadingAnchor.constraint(equalTo: glassView.leadingAnchor),
+            hostedView.trailingAnchor.constraint(equalTo: glassView.trailingAnchor),
+            hostedView.topAnchor.constraint(equalTo: glassView.topAnchor),
+            hostedView.bottomAnchor.constraint(equalTo: glassView.bottomAnchor)
+        ])
+    }
 }
 
 @MainActor
@@ -370,9 +446,10 @@ final class SettingsWindowPresenter {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unifiedCompact
         window.isReleasedWhenClosed = false
+        window.configureEverclipGlassSurface()
         settings.applyAppearance(to: window)
         window.center()
-        window.contentViewController = NSHostingController(rootView: rootView)
+        window.installEverclipGlassContent(rootView, material: .underWindowBackground)
         window.makeKeyAndOrderFront(nil)
 
         self.window = window
@@ -420,9 +497,10 @@ final class OnboardingWindowPresenter {
 
         window.title = "欢迎使用 Everclip"
         window.isReleasedWhenClosed = false
+        window.configureEverclipGlassSurface()
         settings.applyAppearance(to: window)
         window.center()
-        window.contentViewController = NSHostingController(rootView: rootView)
+        window.installEverclipGlassContent(rootView, material: .underWindowBackground)
         window.makeKeyAndOrderFront(nil)
 
         self.window = window

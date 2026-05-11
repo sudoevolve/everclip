@@ -65,8 +65,8 @@ final class AppSettings: ObservableObject {
     }
 
     init() {
-        let rawTheme = UserDefaults.standard.string(forKey: Keys.theme) ?? AppTheme.system.rawValue
-        theme = AppTheme(rawValue: rawTheme) ?? .system
+        let rawTheme = UserDefaults.standard.string(forKey: Keys.theme)
+        theme = AppTheme(rawValue: rawTheme ?? "") ?? .system
 
         if UserDefaults.standard.object(forKey: Keys.hotKeyEnabled) == nil {
             hotKeyEnabled = true
@@ -87,6 +87,7 @@ final class AppSettings: ObservableObject {
         }
 
         hasSeenIntro = UserDefaults.standard.bool(forKey: Keys.hasSeenIntro)
+        UserDefaults.standard.set(theme.rawValue, forKey: Keys.theme)
     }
 
     var colorScheme: ColorScheme? {
@@ -99,9 +100,9 @@ final class AppSettings: ObservableObject {
         case .system:
             return nil
         case .day:
-            return NSAppearance(named: .aqua)
+            return NSAppearance(named: .aqua)!
         case .night:
-            return NSAppearance(named: .darkAqua)
+            return NSAppearance(named: .darkAqua)!
         }
     }
 
@@ -116,6 +117,32 @@ final class AppSettings: ObservableObject {
 
     var shortcutLabel: String {
         "⌘⇧V"
+    }
+
+    var isNightMode: Bool {
+        theme == .night
+    }
+
+    func isNightMode(systemColorScheme: ColorScheme) -> Bool {
+        switch theme {
+        case .system:
+            return systemColorScheme == .dark
+        case .day:
+            return false
+        case .night:
+            return true
+        }
+    }
+
+    func toggleTheme(systemColorScheme: ColorScheme) {
+        switch theme {
+        case .system:
+            theme = systemColorScheme == .dark ? .day : .night
+        case .day:
+            theme = .night
+        case .night:
+            theme = .day
+        }
     }
 
     func markIntroSeen() {

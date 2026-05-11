@@ -79,9 +79,10 @@ final class MainWindowPresenter {
         window.titlebarAppearsTransparent = true
         window.toolbarStyle = .unifiedCompact
         window.isReleasedWhenClosed = false
+        window.configureEverclipGlassSurface()
         settings.applyAppearance(to: window)
         window.center()
-        window.contentViewController = NSHostingController(rootView: rootView)
+        window.installEverclipGlassContent(rootView, material: .underWindowBackground)
         window.makeKeyAndOrderFront(nil)
 
         self.window = window

@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import Combine
 
 struct SettingsView: View {
     @EnvironmentObject private var settings: AppSettings
@@ -46,7 +45,7 @@ struct SettingsView: View {
 
                 VStack(spacing: 12) {
                     SettingsSection(title: "外观", systemImage: "circle.lefthalf.filled") {
-                        Picker("模式", selection: $settings.theme) {
+                        Picker("模式", selection: themeBinding) {
                             ForEach(AppTheme.allCases) { theme in
                                 Text(theme.title).tag(theme)
                             }
@@ -89,7 +88,7 @@ struct SettingsView: View {
                                 if !accessibilityTrusted {
                                     AccessibilityPermission.openSystemSettings()
                                 }
-                                refreshAccessibilityStatus()
+                                refreshAccessibilityStatusSoon()
                             }
                         }
                         #endif
@@ -120,17 +119,35 @@ struct SettingsView: View {
         .preferredColorScheme(settings.colorScheme)
         #if os(macOS)
         .onAppear {
-            refreshAccessibilityStatus()
-        }
-        .onReceive(Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()) { _ in
-            refreshAccessibilityStatus()
+            refreshAccessibilityStatusSoon()
         }
         #endif
     }
 
+    private var themeBinding: Binding<AppTheme> {
+        Binding(
+            get: { settings.theme },
+            set: { newTheme in
+                guard settings.theme != newTheme else { return }
+
+                DispatchQueue.main.async {
+                    settings.theme = newTheme
+                }
+            }
+        )
+    }
+
     #if os(macOS)
+    private func refreshAccessibilityStatusSoon() {
+        DispatchQueue.main.async {
+            refreshAccessibilityStatus()
+        }
+    }
+
     private func refreshAccessibilityStatus() {
-        accessibilityTrusted = AccessibilityPermission.isTrusted
+        let trusted = AccessibilityPermission.isTrusted
+        guard accessibilityTrusted != trusted else { return }
+        accessibilityTrusted = trusted
     }
     #endif
 }
