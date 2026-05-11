@@ -19,7 +19,7 @@ struct SettingsView: View {
             StaticBackdrop(forcedScheme: settings.colorScheme)
                 .ignoresSafeArea()
 
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     EverclipHeaderMark(systemName: "slider.horizontal.3")
 
@@ -40,10 +40,10 @@ struct SettingsView: View {
                         .padding(.vertical, 6)
                         .background(Color.primary.opacity(0.07), in: Capsule())
                 }
-                .padding(18)
+                .padding(14)
                 .everclipPanel(cornerRadius: 24)
 
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     SettingsSection(title: "外观", systemImage: "circle.lefthalf.filled") {
                         Picker("模式", selection: themeBinding) {
                             ForEach(AppTheme.allCases) { theme in
@@ -110,11 +110,13 @@ struct SettingsView: View {
                     }
                 }
 
-                Spacer()
+                Spacer(minLength: 6)
+
+                SettingsFooter()
             }
             .padding(.horizontal, 34)
-            .padding(.top, 42)
-            .padding(.bottom, 30)
+            .padding(.top, 28)
+            .padding(.bottom, 20)
         }
         .preferredColorScheme(settings.colorScheme)
         #if os(macOS)
@@ -152,6 +154,24 @@ struct SettingsView: View {
     #endif
 }
 
+private struct SettingsFooter: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Label("sudoevolve", systemImage: "person.crop.circle")
+
+            Circle()
+                .fill(Color.secondary.opacity(0.38))
+                .frame(width: 4, height: 4)
+
+            Link("sudoevolve@gmail.com", destination: URL(string: "mailto:sudoevolve@gmail.com")!)
+        }
+        .font(.system(size: 12, weight: .medium, design: .rounded))
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 2)
+    }
+}
+
 private struct SettingsSection<Content: View>: View {
     let title: String
     let systemImage: String
@@ -166,7 +186,7 @@ private struct SettingsSection<Content: View>: View {
             content
                 .font(.system(size: 13, weight: .medium, design: .rounded))
         }
-        .padding(18)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .everclipPanel(cornerRadius: 18)
     }

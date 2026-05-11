@@ -21,10 +21,6 @@ struct StaticBackdrop: View {
             Rectangle()
                 .fill(effectiveScheme == .dark ? Color.black.opacity(0.12) : Color.white.opacity(0.16))
 
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(effectiveScheme == .dark ? 0.16 : 0.24)
-
             LinearGradient(
                 colors: effectiveScheme == .dark
                     ? [
@@ -100,12 +96,12 @@ struct ClipActionRail: View {
             )
         }
         .padding(compact ? 4 : 5)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: compact ? 16 : 18, style: .continuous))
+        .background(Color.primary.opacity(0.075), in: RoundedRectangle(cornerRadius: compact ? 16 : 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: compact ? 16 : 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(compact ? 0.10 : 0.14), radius: compact ? 10 : 16, x: 0, y: compact ? 5 : 9)
+        .shadow(color: .black.opacity(compact ? 0.06 : 0.09), radius: compact ? 7 : 10, x: 0, y: compact ? 3 : 6)
     }
 }
 
@@ -230,10 +226,10 @@ extension View {
 
         return background {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.thinMaterial)
+                .fill(Color.primary.opacity(0.045))
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.028))
+                .fill(Color.white.opacity(0.035))
         }
             .overlay {
                 RoundedRectangle(cornerRadius: max(cornerRadius - 1, 0), style: .continuous)
@@ -251,16 +247,16 @@ extension View {
                     )
                     .padding(1)
             }
-            .shadow(color: .black.opacity(shadowOpacity), radius: 22, x: 0, y: 14)
+            .shadow(color: .black.opacity(shadowOpacity * 0.62), radius: 14, x: 0, y: 8)
     }
 
     func everclipControl(cornerRadius: CGFloat = 14) -> some View {
         background {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color.primary.opacity(0.052))
 
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.045))
+                .fill(Color.white.opacity(0.025))
         }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
