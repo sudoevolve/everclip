@@ -6,11 +6,17 @@
 //
 
 import SwiftUI
+#if os(macOS)
+import Combine
+#endif
 
 struct OnboardingView: View {
     @EnvironmentObject private var settings: AppSettings
     let onFinish: () -> Void
     let onOpenSettings: () -> Void
+    #if os(macOS)
+    @State private var accessibilityTrusted = AccessibilityPermission.isTrusted
+    #endif
 
     var body: some View {
         ZStack {
@@ -37,14 +43,21 @@ struct OnboardingView: View {
                     IntroRow(systemName: "menubar.rectangle", title: "菜单栏驻留", detail: "Everclip 不占 Dock，通过菜单栏打开历史、设置和快速粘贴。")
                     IntroRow(systemName: "keyboard", title: "快速粘贴", detail: "\(settings.shortcutLabel) 打开浮窗，用方向键选择，回车粘贴。")
                     IntroRow(systemName: "photo.on.rectangle", title: "文本和图片", detail: "复制文字、截图或图片都会进入历史，并可再次复制或粘贴。")
-                    IntroRow(systemName: "checkmark.shield", title: "自动粘贴权限", detail: "自动回填到输入框需要 macOS 辅助功能权限，可稍后在设置里授权。")
+                    IntroRow(
+                        systemName: "checkmark.shield",
+                        title: "自动粘贴权限",
+                        detail: permissionDetail
+                    )
                 }
 
                 HStack(spacing: 12) {
                     Button {
                         onOpenSettings()
+                        #if os(macOS)
+                        refreshAccessibilityStatusSoon()
+                        #endif
                     } label: {
-                        Label("打开设置", systemImage: "gearshape")
+                        Label(primaryActionTitle, systemImage: primaryActionIcon)
                             .frame(maxWidth: .infinity)
                     }
                     .controlSize(.large)
@@ -56,6 +69,9 @@ struct OnboardingView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .controlSize(.large)
+                    #if os(macOS)
+                    .disabled(!accessibilityTrusted)
+                    #endif
                     .keyboardShortcut(.defaultAction)
                 }
             }
@@ -63,7 +79,58 @@ struct OnboardingView: View {
             .padding(.vertical, 34)
         }
         .preferredColorScheme(settings.colorScheme)
+        #if os(macOS)
+        .onAppear {
+            refreshAccessibilityStatusSoon()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshAccessibilityStatusSoon()
+        }
+        .onReceive(Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()) { _ in
+            refreshAccessibilityStatus()
+        }
+        #endif
     }
+
+    private var permissionDetail: String {
+        #if os(macOS)
+        if accessibilityTrusted {
+            return "辅助功能权限已授权，可以使用快捷键、回车粘贴和点击粘贴。"
+        }
+
+        return "必须先授予 macOS 辅助功能权限，Everclip 才能把内容自动粘贴到当前输入框。"
+        #else
+        return "自动回填到输入框需要系统权限。"
+        #endif
+    }
+
+    private var primaryActionTitle: String {
+        #if os(macOS)
+        accessibilityTrusted ? "打开设置" : "授予权限"
+        #else
+        "打开设置"
+        #endif
+    }
+
+    private var primaryActionIcon: String {
+        #if os(macOS)
+        accessibilityTrusted ? "gearshape" : "lock.open"
+        #else
+        "gearshape"
+        #endif
+    }
+
+    #if os(macOS)
+    private func refreshAccessibilityStatusSoon() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            refreshAccessibilityStatus()
+        }
+    }
+
+    private func refreshAccessibilityStatus() {
+        accessibilityTrusted = AccessibilityPermission.isTrusted
+    }
+    #endif
 }
 
 private struct IntroRow: View {

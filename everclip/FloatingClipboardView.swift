@@ -6,6 +6,8 @@
 //
 
 #if os(macOS)
+import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 struct FloatingClipboardView: View {
@@ -13,11 +15,13 @@ struct FloatingClipboardView: View {
     @EnvironmentObject private var settings: AppSettings
     @FocusState private var searchFocused: Bool
 
-    let onPaste: (ClipboardItem) -> Void
+    let onPaste: ([ClipboardItem]) -> Void
     let onClose: () -> Void
 
     @State private var query = ""
     @State private var selectedIndex = 0
+    @State private var selectedIDs: Set<ClipboardItem.ID> = []
+    @State private var selectionAnchorIndex: Int?
     @State private var closeHovering = false
 
     private var results: [ClipboardItem] {
@@ -33,6 +37,10 @@ struct FloatingClipboardView: View {
         return Array(items.prefix(7))
     }
 
+    private var selectedItems: [ClipboardItem] {
+        results.filter { selectedIDs.contains($0.id) }
+    }
+
     var body: some View {
         ZStack {
             StaticBackdrop(forcedScheme: settings.colorScheme)
@@ -46,7 +54,7 @@ struct FloatingClipboardView: View {
                         Text("快速粘贴")
                             .font(.system(size: 17, weight: .semibold, design: .rounded))
 
-                        Text(settings.pasteAfterSelection ? "选择后粘贴" : "选择后复制")
+                        Text(statusText)
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundStyle(.secondary)
                     }
@@ -132,9 +140,20 @@ struct FloatingClipboardView: View {
                                         item: item,
                                         index: index + 1,
                                         isSelected: index == selectedIndex,
+                                        isMarked: selectedIDs.contains(item.id),
+                                        showsSelectionControl: !selectedIDs.isEmpty,
+                                        onToggleSelection: {
+                                            toggleSelection(for: item)
+                                        },
                                         onSelect: {
                                             selectedIndex = index
-                                            pasteSelected()
+                                            selectionAnchorIndex = nil
+
+                                            if selectedIDs.isEmpty {
+                                                pasteSelected()
+                                            } else {
+                                                toggleSelection(for: item)
+                                            }
                                         }
                                     )
                                     .id(item.id)
@@ -164,7 +183,24 @@ struct FloatingClipboardView: View {
         }
         .onChange(of: query) { _, _ in
             selectedIndex = 0
+            selectionAnchorIndex = nil
+            selectedIDs.removeAll()
         }
+        .onChange(of: results.map(\.id)) { _, ids in
+            let visibleIDs = Set(ids)
+            selectedIDs = selectedIDs.intersection(visibleIDs)
+
+            if results.isEmpty {
+                selectedIndex = 0
+            } else if !results.indices.contains(selectedIndex) {
+                selectedIndex = results.count - 1
+            }
+        }
+        .background(
+            FloatingKeyboardBridge { event in
+                handleKeyEvent(event)
+            }
+        )
         .onKeyPress(.downArrow) {
             moveSelection(1)
             return .handled
@@ -183,18 +219,125 @@ struct FloatingClipboardView: View {
         }
     }
 
-    private func moveSelection(_ delta: Int) {
+    private var statusText: String {
+        if selectedIDs.isEmpty {
+            return "选择后粘贴"
+        }
+
+        return "已选 \(selectedIDs.count) 项，回车粘贴"
+    }
+
+    private func handleKeyEvent(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        switch Int(event.keyCode) {
+        case kVK_DownArrow:
+            moveSelection(1, extendingSelection: modifiers.contains(.shift))
+            return true
+        case kVK_UpArrow:
+            moveSelection(-1, extendingSelection: modifiers.contains(.shift))
+            return true
+        case kVK_Return, kVK_ANSI_KeypadEnter:
+            pasteSelected()
+            return true
+        case kVK_Escape:
+            onClose()
+            return true
+        case kVK_ANSI_A where modifiers.contains(.command) && query.isEmpty:
+            selectedIDs = Set(results.map(\.id))
+            selectionAnchorIndex = nil
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func moveSelection(_ delta: Int, extendingSelection: Bool = false) {
         guard !results.isEmpty else { return }
+        let previousIndex = selectedIndex
         selectedIndex = min(max(selectedIndex + delta, 0), results.count - 1)
+
+        if extendingSelection {
+            let anchorIndex = selectionAnchorIndex ?? previousIndex
+            selectionAnchorIndex = anchorIndex
+            let range = min(anchorIndex, selectedIndex)...max(anchorIndex, selectedIndex)
+            selectedIDs = Set(range.map { results[$0].id })
+        } else {
+            selectionAnchorIndex = nil
+        }
+    }
+
+    private func toggleSelection(for item: ClipboardItem) {
+        selectionAnchorIndex = nil
+
+        if selectedIDs.contains(item.id) {
+            selectedIDs.remove(item.id)
+        } else {
+            selectedIDs.insert(item.id)
+        }
     }
 
     private func pasteSelected() {
-        guard results.indices.contains(selectedIndex) else { return }
-        let item = results[selectedIndex]
-        searchFocused = false
+        let items = selectedItems
+        let itemsToPaste: [ClipboardItem]
 
-        DispatchQueue.main.async {
-            onPaste(item)
+        if items.isEmpty {
+            guard results.indices.contains(selectedIndex) else { return }
+            itemsToPaste = [results[selectedIndex]]
+        } else {
+            itemsToPaste = items
+        }
+
+        searchFocused = false
+        onPaste(itemsToPaste)
+    }
+}
+
+private struct FloatingKeyboardBridge: NSViewRepresentable {
+    var onKeyDown: (NSEvent) -> Bool
+
+    func makeNSView(context: Context) -> KeyCatcherView {
+        let view = KeyCatcherView()
+        view.onKeyDown = onKeyDown
+        return view
+    }
+
+    func updateNSView(_ nsView: KeyCatcherView, context: Context) {
+        nsView.onKeyDown = onKeyDown
+    }
+
+    final class KeyCatcherView: NSView {
+        var onKeyDown: ((NSEvent) -> Bool)?
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+
+            if window == nil {
+                removeMonitor()
+            } else {
+                installMonitor()
+            }
+        }
+
+        deinit {
+            removeMonitor()
+        }
+
+        private func installMonitor() {
+            guard monitor == nil else { return }
+
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                return self.onKeyDown?(event) == true ? nil : event
+            }
+        }
+
+        private func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
         }
     }
 }
@@ -226,6 +369,9 @@ private struct FloatingClipRow: View {
     let item: ClipboardItem
     let index: Int
     let isSelected: Bool
+    let isMarked: Bool
+    let showsSelectionControl: Bool
+    let onToggleSelection: () -> Void
     let onSelect: () -> Void
     @State private var isHovering = false
 
@@ -235,12 +381,20 @@ private struct FloatingClipRow: View {
 
     var body: some View {
         ZStack(alignment: .trailing) {
-            rowContent
+            HStack(spacing: 10) {
+                selectionButton
+
+                Button(action: onSelect) {
+                    rowContent
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 9)
                 .padding(.trailing, showsActions ? 124 : 0)
                 .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .onTapGesture(perform: onSelect)
 
             if showsActions {
                 ClipActionRail(
@@ -295,8 +449,19 @@ private struct FloatingClipRow: View {
                 isHovering = hovering
             }
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.82), value: isSelected)
         .animation(.spring(response: 0.22, dampingFraction: 0.84), value: showsActions)
+    }
+
+    private var selectionButton: some View {
+        Button(action: onToggleSelection) {
+            Image(systemName: isMarked ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(isMarked ? item.accentColors.first ?? .cyan : .secondary)
+                .frame(width: 20, height: 24)
+                .opacity(isMarked || showsSelectionControl || isHovering ? 1 : 0.42)
+        }
+        .buttonStyle(.plain)
+        .help(isMarked ? "取消选择" : "加入多选")
     }
 
     private var rowContent: some View {
@@ -316,8 +481,7 @@ private struct FloatingClipRow: View {
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(.secondary)
             }
-
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if item.isPinned {
                 Image(systemName: "pin.fill")

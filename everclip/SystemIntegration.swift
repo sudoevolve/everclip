@@ -33,11 +33,16 @@ final class EverclipModel: ObservableObject {
 
         hotKeyManager = GlobalHotKeyManager { [weak self] in
             guard let self, self.settings.hotKeyEnabled else { return }
+            guard AccessibilityPermission.isTrusted else {
+                OnboardingWindowPresenter.shared.show(settings: self.settings, clipboard: self.clipboard)
+                return
+            }
+
             FloatingClipboardPresenter.shared.show(store: self.clipboard, settings: self.settings)
         }
 
         Task { @MainActor [weak self] in
-            guard let self, !self.settings.hasSeenIntro else { return }
+            guard let self, !self.settings.hasSeenIntro || !AccessibilityPermission.isTrusted else { return }
             OnboardingWindowPresenter.shared.show(settings: self.settings, clipboard: self.clipboard)
         }
     }
@@ -163,7 +168,7 @@ final class FloatingClipboardPresenter {
     private static let panelCornerRadius: CGFloat = 22
 
     private var panel: FloatingClipboardPanel?
-    private weak var targetApplication: NSRunningApplication?
+    private var targetApplication: NSRunningApplication?
     private var targetFocusedElement: AXUIElement?
 
     func show(store: ClipboardStore, settings: AppSettings) {
@@ -179,7 +184,7 @@ final class FloatingClipboardPresenter {
         }
 
         let content = FloatingClipboardView(
-            onPaste: { [weak self] item in
+            onPaste: { [weak self] items in
                 guard let self else { return }
                 let targetApplication = self.targetApplication
                 let targetFocusedElement = self.targetFocusedElement
@@ -190,8 +195,8 @@ final class FloatingClipboardPresenter {
 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                     store.paste(
-                        item,
-                        performPaste: settings.pasteAfterSelection,
+                        items,
+                        performPaste: true,
                         targetApplication: targetApplication,
                         focusedElement: targetFocusedElement
                     )
@@ -231,6 +236,9 @@ final class FloatingClipboardPresenter {
         configurePanelSurface()
         positionPanel(settings: settings)
         panel?.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [weak self] in
+            self?.positionPanel(settings: settings)
+        }
     }
 
     func applyAppearance(settings: AppSettings) {
@@ -240,32 +248,96 @@ final class FloatingClipboardPresenter {
     private func positionPanel(settings: AppSettings) {
         guard let panel else { return }
 
-        let size = panel.frame.size
-        let anchor = focusedInputFrame(for: targetApplication)?.center ?? NSEvent.mouseLocation
+        let size = Self.panelSize
+        let focusedFrame = focusedAvoidanceFrame(for: targetFocusedElement)
+            ?? focusedInputFrame(for: targetApplication)
+        let mouse = NSEvent.mouseLocation
+        let anchor = focusedFrame?.center ?? mouse
         let targetScreen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
 
         let origin: NSPoint
-        if let focusedFrame = focusedInputFrame(for: targetApplication) {
-            let x = min(max(focusedFrame.midX - size.width / 2, visibleFrame.minX + 18), visibleFrame.maxX - size.width - 18)
-            let preferredY = focusedFrame.minY - size.height - 12
-            let fallbackY = focusedFrame.maxY + 12
-            let y = preferredY >= visibleFrame.minY + 18 ? preferredY : min(fallbackY, visibleFrame.maxY - size.height - 18)
-            origin = NSPoint(x: x, y: max(y, visibleFrame.minY + 18))
+        if let focusedFrame {
+            origin = bestPanelOrigin(
+                size: size,
+                visibleFrame: visibleFrame,
+                avoiding: focusedFrame,
+                anchor: focusedFrame.center
+            )
         } else if settings.showFloatingNearPointer {
-            let mouse = NSEvent.mouseLocation
-            origin = NSPoint(
-                x: min(max(mouse.x - size.width / 2, visibleFrame.minX + 18), visibleFrame.maxX - size.width - 18),
-                y: min(max(mouse.y - size.height - 16, visibleFrame.minY + 18), visibleFrame.maxY - size.height - 18)
+            let pointerFrame = CGRect(x: mouse.x - 12, y: mouse.y - 12, width: 24, height: 24)
+            origin = bestPanelOrigin(
+                size: size,
+                visibleFrame: visibleFrame,
+                avoiding: pointerFrame,
+                anchor: mouse
             )
         } else {
-            origin = NSPoint(
-                x: visibleFrame.midX - size.width / 2,
-                y: visibleFrame.midY - size.height / 2
+            origin = clampedPanelOrigin(
+                NSPoint(
+                    x: visibleFrame.midX - size.width / 2,
+                    y: visibleFrame.midY - size.height / 2
+                ),
+                size: size,
+                visibleFrame: visibleFrame
             )
         }
 
-        panel.setFrameOrigin(origin)
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+    }
+
+    private func bestPanelOrigin(
+        size: CGSize,
+        visibleFrame: CGRect,
+        avoiding frame: CGRect,
+        anchor: CGPoint
+    ) -> NSPoint {
+        let gap: CGFloat = 22
+        let protectedFrame = frame.insetBy(dx: -28, dy: -28)
+        let centeredX = frame.midX - size.width / 2
+        let centeredY = frame.midY - size.height / 2
+
+        let rawCandidates = [
+            NSPoint(x: centeredX, y: frame.minY - size.height - gap),
+            NSPoint(x: centeredX, y: frame.maxY + gap),
+            NSPoint(x: frame.maxX + gap, y: centeredY),
+            NSPoint(x: frame.minX - size.width - gap, y: centeredY),
+            NSPoint(
+                x: visibleFrame.midX - size.width / 2,
+                y: visibleFrame.midY - size.height / 2
+            )
+        ]
+
+        let scoredCandidates = rawCandidates.enumerated().map { index, rawOrigin in
+            let origin = clampedPanelOrigin(rawOrigin, size: size, visibleFrame: visibleFrame)
+            let rect = CGRect(origin: origin, size: size)
+            let clampShift = hypot(origin.x - rawOrigin.x, origin.y - rawOrigin.y)
+            let distance = hypot(rect.midX - anchor.x, rect.midY - anchor.y)
+            let overlap = rect.overlapArea(with: protectedFrame)
+            let score = overlap * 10_000 + clampShift * 40 + distance * 0.05 + CGFloat(index)
+
+            return (origin: origin, score: score)
+        }
+
+        return scoredCandidates.min { $0.score < $1.score }?.origin
+            ?? clampedPanelOrigin(rawCandidates[0], size: size, visibleFrame: visibleFrame)
+    }
+
+    private func clampedPanelOrigin(
+        _ origin: NSPoint,
+        size: CGSize,
+        visibleFrame: CGRect
+    ) -> NSPoint {
+        let margin: CGFloat = 18
+        let minX = visibleFrame.minX + margin
+        let maxX = max(minX, visibleFrame.maxX - size.width - margin)
+        let minY = visibleFrame.minY + margin
+        let maxY = max(minY, visibleFrame.maxY - size.height - margin)
+
+        return NSPoint(
+            x: min(max(origin.x, minX), maxX),
+            y: min(max(origin.y, minY), maxY)
+        )
     }
 
     private func configurePanelSurface() {
@@ -328,15 +400,111 @@ final class FloatingClipboardPresenter {
             return nil
         }
 
+        return convertAccessibilityFrame(CGRect(origin: position, size: size))
+    }
+
+    private func focusedAvoidanceFrame(for element: AXUIElement?) -> CGRect? {
+        guard AccessibilityPermission.isTrusted, let element else { return nil }
+
+        if let caretFrame = selectedTextFrame(for: element) {
+            return caretFrame
+        }
+
+        return elementFrame(for: element)
+    }
+
+    private func selectedTextFrame(for element: AXUIElement) -> CGRect? {
+        var rangeValue: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
+              let rangeValue
+        else {
+            return nil
+        }
+
+        let rangeAXValue = rangeValue as! AXValue
+        var boundsValue: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(
+            element,
+            kAXBoundsForRangeParameterizedAttribute as CFString,
+            rangeAXValue,
+            &boundsValue
+        ) == .success,
+              let boundsValue
+        else {
+            return nil
+        }
+
+        let boundsAXValue = boundsValue as! AXValue
+        var bounds = CGRect.zero
+        guard AXValueGetValue(boundsAXValue, .cgRect, &bounds),
+              bounds.width.isFinite,
+              bounds.height.isFinite
+        else {
+            return nil
+        }
+
+        if bounds.width < 8 {
+            bounds = bounds.insetBy(dx: -4, dy: 0)
+        }
+
+        if bounds.height < 18 {
+            bounds = bounds.insetBy(dx: 0, dy: -8)
+        }
+
+        return convertAccessibilityFrame(bounds)
+    }
+
+    private func elementFrame(for element: AXUIElement) -> CGRect? {
+        var positionValue: CFTypeRef?
+        var sizeValue: CFTypeRef?
+
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success,
+              let positionValue,
+              let sizeValue
+        else {
+            return nil
+        }
+
+        let positionAXValue = positionValue as! AXValue
+        let sizeAXValue = sizeValue as! AXValue
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionAXValue, .cgPoint, &position),
+              AXValueGetValue(sizeAXValue, .cgSize, &size),
+              size.width > 0,
+              size.height > 0
+        else {
+            return nil
+        }
+
+        return convertAccessibilityFrame(CGRect(origin: position, size: size))
+    }
+
+    private func convertAccessibilityFrame(_ frame: CGRect) -> CGRect {
         let displayMaxY = NSScreen.screens.map(\.frame.maxY).max() ?? 0
-        let convertedY = displayMaxY - position.y - size.height
-        return CGRect(x: position.x, y: convertedY, width: size.width, height: size.height)
+        return CGRect(
+            x: frame.origin.x,
+            y: displayMaxY - frame.origin.y - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
     }
 }
 
 private extension CGRect {
     var center: CGPoint {
         CGPoint(x: midX, y: midY)
+    }
+
+    var area: CGFloat {
+        guard !isNull, !isEmpty else { return 0 }
+        return width * height
+    }
+
+    func overlapArea(with rect: CGRect) -> CGFloat {
+        intersection(rect).area
     }
 }
 
@@ -477,11 +645,16 @@ final class OnboardingWindowPresenter {
 
         let rootView = OnboardingView(
             onFinish: { [weak self] in
+                guard AccessibilityPermission.isTrusted else { return }
                 settings.markIntroSeen()
                 self?.window?.close()
             },
             onOpenSettings: {
-                SettingsWindowPresenter.shared.show(settings: settings, clipboard: clipboard)
+                if AccessibilityPermission.isTrusted {
+                    SettingsWindowPresenter.shared.show(settings: settings, clipboard: clipboard)
+                } else {
+                    AccessibilityPermission.openSystemSettings()
+                }
             }
         )
         .environmentObject(settings)

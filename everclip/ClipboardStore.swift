@@ -518,6 +518,19 @@ final class ClipboardStore: ObservableObject {
         insertOrPromote(item, shouldPersist: true)
     }
 
+    func copy(_ items: [ClipboardItem]) {
+        guard !items.isEmpty else { return }
+
+        if items.count == 1, let item = items.first {
+            copy(item)
+            return
+        }
+
+        writeToSystemPasteboard(items)
+        items.reversed().forEach { insertOrPromote($0, shouldPersist: false) }
+        persistHistory()
+    }
+
     #if os(macOS)
     func paste(
         _ item: ClipboardItem,
@@ -528,17 +541,46 @@ final class ClipboardStore: ObservableObject {
         copy(item)
 
         guard performPaste else { return }
-
-        if !Self.isAccessibilityTrusted {
-            Self.requestAccessibilityPermission()
-        }
+        guard Self.isAccessibilityTrusted else { return }
 
         Self.prepareTargetForPaste(targetApplication: targetApplication, focusedElement: focusedElement)
 
         let pasteDelay: TimeInterval = item.isImage ? 0.70 : 0.25
         DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay) {
             Self.prepareTargetForPaste(targetApplication: targetApplication, focusedElement: focusedElement)
-            Self.postPasteShortcut()
+            Self.postPasteShortcut(to: targetApplication)
+        }
+    }
+
+    func paste(
+        _ items: [ClipboardItem],
+        performPaste: Bool,
+        targetApplication: NSRunningApplication?,
+        focusedElement: AXUIElement?
+    ) {
+        guard !items.isEmpty else { return }
+
+        if items.count == 1, let item = items.first {
+            paste(
+                item,
+                performPaste: performPaste,
+                targetApplication: targetApplication,
+                focusedElement: focusedElement
+            )
+            return
+        }
+
+        copy(items)
+
+        guard performPaste else { return }
+        guard Self.isAccessibilityTrusted else { return }
+
+        Self.prepareTargetForPaste(targetApplication: targetApplication, focusedElement: focusedElement)
+
+        let pasteDelay: TimeInterval = items.contains(where: \.isImage) ? 0.70 : 0.25
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay) {
+            Self.prepareTargetForPaste(targetApplication: targetApplication, focusedElement: focusedElement)
+            Self.postPasteShortcut(to: targetApplication)
         }
     }
     #endif
@@ -613,6 +655,47 @@ final class ClipboardStore: ObservableObject {
         #elseif canImport(UIKit)
         UIPasteboard.general.string = item.text
         #endif
+    }
+
+    private func writeToSystemPasteboard(_ items: [ClipboardItem]) {
+        #if os(macOS)
+        guard !items.isEmpty else { return }
+
+        if items.count == 1, let item = items.first {
+            writeToSystemPasteboard(item)
+            return
+        }
+
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+
+        if items.allSatisfy({ !$0.isImage }) {
+            pasteboard.setString(items.map(\.text).joined(separator: "\n"), forType: .string)
+        } else {
+            let objects: [NSPasteboardWriting] = items.compactMap { item in
+                if item.isImage {
+                    return item.nsImage
+                }
+
+                return item.text as NSString
+            }
+
+            if objects.isEmpty || !pasteboard.writeObjects(objects) {
+                pasteboard.setString(multiPasteFallbackText(for: items), forType: .string)
+            }
+        }
+
+        lastChangeCount = pasteboard.changeCount
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = items.map(\.text).joined(separator: "\n")
+        #endif
+    }
+
+    private func multiPasteFallbackText(for items: [ClipboardItem]) -> String {
+        items.map { item in
+            item.isImage ? "[图片剪贴 \(item.imageDescription)]" : item.text
+        }
+        .joined(separator: "\n")
     }
 
     private func insertOrPromote(_ item: ClipboardItem, shouldPersist: Bool) {
@@ -850,14 +933,6 @@ final class ClipboardStore: ObservableObject {
         AXIsProcessTrusted()
     }
 
-    private static func requestAccessibilityPermission() {
-        let options = [
-            kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-        ] as CFDictionary
-
-        _ = AXIsProcessTrustedWithOptions(options)
-    }
-
     private static func prepareTargetForPaste(targetApplication: NSRunningApplication?, focusedElement: AXUIElement?) {
         NSApplication.shared.deactivate()
         targetApplication?.activate(options: [.activateAllWindows])
@@ -872,33 +947,30 @@ final class ClipboardStore: ObservableObject {
         AXUIElementSetAttributeValue(focusedElement, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     }
 
-    private static func postPasteShortcut() {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let commandKey = CGKeyCode(kVK_Command)
+    private static func postPasteShortcut(to targetApplication: NSRunningApplication?) {
+        let source = CGEventSource(stateID: .combinedSessionState)
         let vKey = CGKeyCode(kVK_ANSI_V)
 
-        let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: true)
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        let commandUp = CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: false)
 
-        commandDown?.flags = .maskCommand
         vDown?.flags = .maskCommand
         vUp?.flags = .maskCommand
-        commandUp?.flags = []
 
-        commandDown?.post(tap: .cghidEventTap)
+        if let targetApplication, let vDown {
+            vDown.postToPid(targetApplication.processIdentifier)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) {
-            vDown?.post(tap: .cghidEventTap)
-        }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                if let vUp {
+                    vUp.postToPid(targetApplication.processIdentifier)
+                }
+            }
+        } else {
+            vDown?.post(tap: .cgAnnotatedSessionEventTap)
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.075) {
-            vUp?.post(tap: .cghidEventTap)
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.105) {
-            commandUp?.post(tap: .cghidEventTap)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                vUp?.post(tap: .cgAnnotatedSessionEventTap)
+            }
         }
     }
     #endif
